@@ -150,3 +150,7 @@ Run your own: `go run ./cmd/kvbench -endpoints=host1:7001,host2:7001,host3:7001 
   (a lease may live a little longer or shorter than its TTL). For safety, make the protected
   resource check the fencing token.
 * `-unsafe-no-fsync` exists for benchmarks. Do not use it with data you care about.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
