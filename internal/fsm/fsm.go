@@ -56,18 +56,20 @@ type Machine struct {
 	opts Options
 	hub  *watch.Hub
 
-	mu         sync.RWMutex
-	tree       *btree.BTreeG[*item]
-	vers       *btree.BTreeG[*keyHist]
-	compactRev uint64 // reads below this revision are refused
-	rev        uint64
-	applied    uint64
-	clock      int64
-	leases     map[uint64]*lease
-	locks      map[string]*lockState
-	sessions   map[uint64]*session
-	hist       []histEntry
-	histBase   uint64 // oldest revision still replayable
+	mu          sync.RWMutex
+	tree        *btree.BTreeG[*item]
+	vers        *btree.BTreeG[*keyHist]
+	compactRev  uint64 // reads below this revision are refused
+	sweeping    bool   // a compaction is still being applied to the history
+	sweepCursor string // next key the sweep looks at
+	rev         uint64
+	applied     uint64
+	clock       int64
+	leases      map[uint64]*lease
+	locks       map[string]*lockState
+	sessions    map[uint64]*session
+	hist        []histEntry
+	histBase    uint64 // oldest revision still replayable
 
 	lockSubs map[lockKey][]chan LockEvent
 
@@ -91,6 +93,8 @@ func (m *Machine) reset() {
 	m.tree = btree.NewG(32, func(a, b *item) bool { return a.key < b.key })
 	m.vers = btree.NewG(32, func(a, b *keyHist) bool { return a.key < b.key })
 	m.compactRev = 0
+	m.sweeping, m.sweepCursor = false, ""
+	m.sweeping, m.sweepCursor = false, ""
 	m.rev, m.applied, m.clock = 0, 0, 0
 	m.leases = make(map[uint64]*lease)
 	m.locks = make(map[string]*lockState)
@@ -152,6 +156,7 @@ func (m *Machine) Apply(e raft.Entry) any {
 		res = errResult(kvpb.ErrInvalidArgument, "empty command")
 	}
 
+	m.compactStep()
 	m.flushEvents()
 	return res
 }

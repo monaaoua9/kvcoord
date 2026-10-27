@@ -457,6 +457,8 @@ message FSMSnapshot {
   repeated SnapSession sessions = 7;
   uint64 compact_rev = 8;
   repeated SnapKeyHistory history = 9;
+  bool sweeping = 10;
+  string sweep_cursor = 11;
 }
 
 // ---- raft transport (node to node) ----

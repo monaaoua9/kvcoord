@@ -4036,6 +4036,8 @@ type FSMSnapshot struct {
 	Sessions      []*SnapSession         `protobuf:"bytes,7,rep,name=sessions,proto3" json:"sessions,omitempty"`
 	CompactRev    uint64                 `protobuf:"varint,8,opt,name=compact_rev,json=compactRev,proto3" json:"compact_rev,omitempty"`
 	History       []*SnapKeyHistory      `protobuf:"bytes,9,rep,name=history,proto3" json:"history,omitempty"`
+	Sweeping      bool                   `protobuf:"varint,10,opt,name=sweeping,proto3" json:"sweeping,omitempty"`
+	SweepCursor   string                 `protobuf:"bytes,11,opt,name=sweep_cursor,json=sweepCursor,proto3" json:"sweep_cursor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4131,6 +4133,20 @@ func (x *FSMSnapshot) GetHistory() []*SnapKeyHistory {
 		return x.History
 	}
 	return nil
+}
+
+func (x *FSMSnapshot) GetSweeping() bool {
+	if x != nil {
+		return x.Sweeping
+	}
+	return false
+}
+
+func (x *FSMSnapshot) GetSweepCursor() string {
+	if x != nil {
+		return x.SweepCursor
+	}
+	return ""
 }
 
 type LogEntry struct {
@@ -4717,7 +4733,7 @@ const file_kv_proto_rawDesc = "" +
 	"\ttombstone\x18\x06 \x01(\bR\ttombstone\"W\n" +
 	"\x0eSnapKeyHistory\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\fR\x03key\x123\n" +
-	"\bversions\x18\x02 \x03(\v2\x17.kvcoord.v1.SnapVersionR\bversions\"\xed\x02\n" +
+	"\bversions\x18\x02 \x03(\v2\x17.kvcoord.v1.SnapVersionR\bversions\"\xac\x03\n" +
 	"\vFSMSnapshot\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\x04R\aapplied\x12\x19\n" +
@@ -4728,7 +4744,10 @@ const file_kv_proto_rawDesc = "" +
 	"\bsessions\x18\a \x03(\v2\x17.kvcoord.v1.SnapSessionR\bsessions\x12\x1f\n" +
 	"\vcompact_rev\x18\b \x01(\x04R\n" +
 	"compactRev\x124\n" +
-	"\ahistory\x18\t \x03(\v2\x1a.kvcoord.v1.SnapKeyHistoryR\ahistory\"\\\n" +
+	"\ahistory\x18\t \x03(\v2\x1a.kvcoord.v1.SnapKeyHistoryR\ahistory\x12\x1a\n" +
+	"\bsweeping\x18\n" +
+	" \x01(\bR\bsweeping\x12!\n" +
+	"\fsweep_cursor\x18\v \x01(\tR\vsweepCursor\"\\\n" +
 	"\bLogEntry\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\x04R\x05index\x12\x12\n" +
 	"\x04term\x18\x02 \x01(\x04R\x04term\x12\x12\n" +

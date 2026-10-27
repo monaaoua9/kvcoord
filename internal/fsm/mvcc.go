@@ -105,25 +105,42 @@ func (m *Machine) rangeAt(req *kvpb.RangeRequest, rev uint64) *kvpb.RangeRespons
 	return resp
 }
 
-// applyCompact is deterministic and consumes no revision. Compacting to a
-// revision that is already compacted is a no-op so retries are harmless.
+// compactBudget is how many keys one Apply may clean. Cleanup is driven by the
+// applied commands themselves, so every replica does exactly the same work at
+// the same log index and a snapshot taken half way carries the cursor.
+const compactBudget = 256
+
+// applyCompact raises the compaction floor at once (older reads fail from now on)
+// and schedules the cleanup. It consumes no revision, and repeating a compaction
+// is a no-op so retries are harmless.
 func (m *Machine) applyCompact(req *kvpb.CompactRequest) *kvpb.CommandResult {
 	if req.Revision > m.rev {
 		return errResult(kvpb.ErrFutureRevision, "revision is in the future")
 	}
 	if req.Revision > m.compactRev {
-		m.compact(req.Revision)
+		m.compactRev = req.Revision
+		// a newer target restarts the sweep, keys already swept still need the new cut
+		m.sweeping, m.sweepCursor = true, ""
 	}
 	return &kvpb.CommandResult{Body: &kvpb.CommandResult_Compact{Compact: &kvpb.CompactResponse{}}}
 }
 
-// compact keeps, per key, the newest version at or below rev (unless it is a
-// tombstone) and everything after. It walks every key, so on a huge store it
-// holds the apply loop for a moment.
-func (m *Machine) compact(rev uint64) {
-	var changed []*keyHist // replacements, the originals may be shared with a snapshot
-	var empty []*keyHist
-	m.vers.Ascend(func(kh *keyHist) bool {
+// compactStep cleans up to compactBudget keys. Per key it keeps the newest
+// version at or below the floor (unless that is a tombstone) and everything newer.
+func (m *Machine) compactStep() {
+	if !m.sweeping {
+		return
+	}
+	rev := m.compactRev
+	var changed, empty []*keyHist // originals may be shared with a snapshot, so replace them
+	seen := 0
+	last := ""
+	m.vers.AscendGreaterOrEqual(&keyHist{key: m.sweepCursor}, func(kh *keyHist) bool {
+		if seen == compactBudget {
+			return false
+		}
+		seen++
+		last = kh.key
 		i := sort.Search(len(kh.vers), func(i int) bool { return kh.vers[i].rev > rev }) - 1
 		if i < 0 {
 			return true
@@ -147,7 +164,11 @@ func (m *Machine) compact(rev uint64) {
 	for _, kh := range empty {
 		m.vers.Delete(kh)
 	}
-	m.compactRev = rev
+	if seen < compactBudget {
+		m.sweeping, m.sweepCursor = false, ""
+		return
+	}
+	m.sweepCursor = last + string(rune(0))
 }
 
 // CompactRevision is the oldest revision reads can still be served at.

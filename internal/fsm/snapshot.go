@@ -22,7 +22,7 @@ func (m *Machine) Snapshot() ([]byte, error) { return m.SnapshotAsync()() }
 func (m *Machine) SnapshotAsync() func() ([]byte, error) {
 	m.mu.Lock()
 	tree, vers := m.tree.Clone(), m.vers.Clone()
-	s := &kvpb.FSMSnapshot{Revision: m.rev, Applied: m.applied, ClockNs: m.clock, CompactRev: m.compactRev}
+	s := &kvpb.FSMSnapshot{Revision: m.rev, Applied: m.applied, ClockNs: m.clock, CompactRev: m.compactRev, Sweeping: m.sweeping, SweepCursor: m.sweepCursor}
 
 	for _, l := range m.leases {
 		s.Leases = append(s.Leases, &kvpb.SnapLease{Id: l.id, TtlNs: l.ttl, DeadlineNs: l.deadline})
@@ -107,6 +107,7 @@ func (m *Machine) Restore(data []byte) error {
 		}
 	}
 	m.compactRev = s.CompactRev
+	m.sweeping, m.sweepCursor = s.Sweeping, s.SweepCursor
 	for _, h := range s.History {
 		kh := &keyHist{key: string(h.Key)}
 		for _, v := range h.Versions {

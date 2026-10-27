@@ -255,3 +255,92 @@ func TestAsyncSnapshotIgnoresLaterWrites(t *testing.T) {
 		t.Fatalf("async snapshot differs from the state at capture time (%d vs %d bytes)", len(got), len(want))
 	}
 }
+
+func versionCount(m *Machine) (keys, versions int) {
+	m.vers.Ascend(func(kh *keyHist) bool {
+		keys++
+		versions += len(kh.vers)
+		return true
+	})
+	return
+}
+
+func TestCompactionIsIncremental(t *testing.T) {
+	r := newRig(t)
+	c := r.session()
+	seq := uint64(1)
+	const keys = 1000
+	for round := 0; round < 3; round++ {
+		for i := 0; i < keys; i++ {
+			seq++
+			r.put(c, seq, fmt.Sprintf("k%04d", i), fmt.Sprint(round), 0)
+		}
+	}
+	rev := r.m.Revision()
+	r.compact(rev)
+
+	// the floor is up straight away even though most history is still there
+	if _, err := r.getAt("k0001", rev-1); !errors.Is(err, ErrCompacted) {
+		t.Fatalf("below the floor must fail at once, got %v", err)
+	}
+	if kv, err := r.getAt("k0999", rev); err != nil || string(kv.Value) != "2" {
+		t.Fatalf("reads at the floor must work mid-sweep: %v %v", kv, err)
+	}
+	_, v := versionCount(r.m)
+	if v <= keys || v >= 3*keys {
+		t.Fatalf("one command should clean part of the store, %d versions left", v)
+	}
+
+	// a snapshot half way through carries the cursor, so a restored copy finishes identically
+	snap, err := r.m.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2 := New(Options{})
+	if err := m2.Restore(snap); err != nil {
+		t.Fatal(err)
+	}
+	b := &rig{t: t, m: m2, idx: r.idx, now: r.now}
+
+	for i := 0; i < 10; i++ {
+		r.compact(rev)
+		b.compact(rev)
+		// the copy must be in the same state at every step, not just at the end
+		sa, _ := r.m.Snapshot()
+		sb, _ := b.m.Snapshot()
+		if !bytes.Equal(sa, sb) {
+			t.Fatalf("restored copy diverged at step %d of the sweep", i)
+		}
+	}
+	if k, v := versionCount(r.m); k != keys || v != keys {
+		t.Fatalf("sweep did not finish: %d keys, %d versions", k, v)
+	}
+	sa, _ := r.m.Snapshot()
+	sb, _ := b.m.Snapshot()
+	if !bytes.Equal(sa, sb) {
+		t.Fatal("restored copy diverged from the original after the sweep")
+	}
+}
+
+// a newer compaction while one is running must still clean everything to the new floor
+func TestCompactionRetargetedMidSweep(t *testing.T) {
+	r := newRig(t)
+	c := r.session()
+	seq := uint64(1)
+	for round := 0; round < 4; round++ {
+		for i := 0; i < 600; i++ {
+			seq++
+			r.put(c, seq, fmt.Sprintf("k%04d", i), fmt.Sprint(round), 0)
+		}
+		if round == 1 {
+			r.compact(r.m.Revision()) // start a sweep that will not finish before the next one
+		}
+	}
+	r.compact(r.m.Revision())
+	for i := 0; i < 10; i++ {
+		r.compact(r.m.Revision())
+	}
+	if k, v := versionCount(r.m); k != 600 || v != 600 {
+		t.Fatalf("%d keys, %d versions", k, v)
+	}
+}
