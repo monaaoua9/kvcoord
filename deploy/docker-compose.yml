@@ -1,0 +1,26 @@
+x-node: &node
+  build:
+    context: ..
+  restart: unless-stopped
+
+services:
+  kv1:
+    <<: *node
+    command: ["-id=1", "-peers=1=kv1:7001,2=kv2:7001,3=kv3:7001", "-data-dir=/data", "-metrics-addr=:9100"]
+    volumes: ["kv1:/data"]
+    ports: ["7001:7001", "9101:9100"]
+  kv2:
+    <<: *node
+    command: ["-id=2", "-peers=1=kv1:7001,2=kv2:7001,3=kv3:7001", "-data-dir=/data", "-metrics-addr=:9100"]
+    volumes: ["kv2:/data"]
+    ports: ["7002:7001", "9102:9100"]
+  kv3:
+    <<: *node
+    command: ["-id=3", "-peers=1=kv1:7001,2=kv2:7001,3=kv3:7001", "-data-dir=/data", "-metrics-addr=:9100"]
+    volumes: ["kv3:/data"]
+    ports: ["7003:7001", "9103:9100"]
+
+volumes:
+  kv1:
+  kv2:
+  kv3:
