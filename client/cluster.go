@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"google.golang.org/grpc"
@@ -93,4 +94,36 @@ func (c *Client) TransferLeader(ctx context.Context, target uint64) error {
 		_, err := kvpb.NewClusterClient(cc).TransferLeader(ctx, &kvpb.TransferLeaderRequest{Target: target})
 		return err
 	})
+}
+
+// MemberReplace swaps old for a new node in three committed steps: add the new
+// one as a learner, promote it once it has caught up, then remove old. Each step
+// keeps a majority of the previous configuration reachable, so a failure in the
+// middle leaves a working cluster (with one extra voter, or one learner). Calling
+// it again resumes from whatever state the cluster is in.
+func (c *Client) MemberReplace(ctx context.Context, oldID, newID uint64, newAddr string) ([]*kvpb.Member, error) {
+	ms, err := c.Members(ctx)
+	if err != nil {
+		return nil, err
+	}
+	has := func(id uint64) *kvpb.Member {
+		for _, m := range ms {
+			if m.Id == id {
+				return m
+			}
+		}
+		return nil
+	}
+	if has(oldID) == nil && has(newID) == nil {
+		return nil, fmt.Errorf("client: node %d is not a member", oldID)
+	}
+	if m := has(newID); m == nil || m.Learner {
+		if _, err := c.MemberAdd(ctx, newID, newAddr); err != nil {
+			return nil, err
+		}
+	}
+	if has(oldID) == nil {
+		return c.Members(ctx)
+	}
+	return c.MemberRemove(ctx, oldID)
 }

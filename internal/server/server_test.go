@@ -673,3 +673,42 @@ func TestTransferLeaderKeepsServing(t *testing.T) {
 		t.Fatalf("keys after transfers: %v %v", r, err)
 	}
 }
+
+func TestReplaceNode(t *testing.T) {
+	c := testcluster.New(t, testcluster.Options{Nodes: 3, SnapshotEvery: 20})
+	c.Leader(3 * time.Second)
+	cl := c.Client()
+	ctx := ctxT(t, 60*time.Second)
+
+	for i := 0; i < 60; i++ {
+		if _, err := cl.Put(ctx, fmt.Sprintf("k%03d", i), "v"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := c.AddNode()
+	ms, err := cl.MemberReplace(ctx, 3, id, c.Addr(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[uint64]bool{}
+	for _, m := range ms {
+		got[m.Id] = m.Learner
+	}
+	if _, old := got[3]; old || len(got) != 3 || got[id] {
+		t.Fatalf("members after replace: %v", ms)
+	}
+
+	// the replacement carries the data and the cluster survives losing another node
+	if k := c.Server(id).Machine().Stats().Keys; k < 60 {
+		t.Fatalf("replacement has %d keys", k)
+	}
+	c.Crash(1)
+	if _, err := cl.Put(ctx, "after", "v"); err != nil {
+		t.Fatal(err)
+	}
+
+	// running it again is harmless
+	if _, err := cl.MemberReplace(ctx, 3, id, c.Addr(id)); err != nil {
+		t.Fatalf("second replace: %v", err)
+	}
+}

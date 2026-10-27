@@ -29,7 +29,7 @@ commands:
   watch KEY [-prefix] [-rev N]
   lease grant TTL | keepalive ID | revoke ID | ttl ID
   lock NAME [-ttl D] -- CMD...  run CMD while holding the lock (KV_FENCING_TOKEN is set)
-  member list | add ID ADDR | add-learner ID ADDR | promote ID | transfer [ID] | remove ID
+  member list | add ID ADDR | add-learner ID ADDR | promote ID | transfer [ID] | replace OLD NEW ADDR | remove ID
   status
 
 global flags:
@@ -341,12 +341,14 @@ func memberCmd(ctx context.Context, cl *client.Client, args []string) {
 		check(cl.TransferLeader(ctx, target))
 		fmt.Println("OK")
 		return
+	case len(args) == 4 && args[0] == "replace":
+		ms, err = cl.MemberReplace(ctx, mustID(args[1]), mustID(args[2]), args[3])
 	case len(args) == 2 && args[0] == "promote":
 		ms, err = cl.MemberPromote(ctx, mustID(args[1]))
 	case len(args) == 2 && args[0] == "remove":
 		ms, err = cl.MemberRemove(ctx, mustID(args[1]))
 	default:
-		die(fmt.Errorf("member: want list | add ID ADDR | add-learner ID ADDR | promote ID | transfer [ID] | remove ID"))
+		die(fmt.Errorf("member: want list | add ID ADDR | add-learner ID ADDR | promote ID | transfer [ID] | replace OLD NEW ADDR | remove ID"))
 	}
 	check(err)
 	for _, m := range ms {
