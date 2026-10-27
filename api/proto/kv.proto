@@ -1,0 +1,499 @@
+syntax = "proto3";
+
+package kvcoord.v1;
+
+option go_package = "github.com/monaaoua9/kvcoord/api/kvpb";
+
+// ---- common ----
+
+message ResponseHeader {
+  uint64 node_id = 1;
+  uint64 term = 2;
+  uint64 revision = 3;
+}
+
+message KeyValue {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 create_revision = 3;
+  uint64 mod_revision = 4;
+  uint64 version = 5;
+  uint64 lease = 6;
+}
+
+// Idempotency envelope for non-idempotent writes. The server keeps the result
+// of every (client_id, seq) until the client acks it via ack_seq.
+message RequestMeta {
+  uint64 client_id = 1;
+  uint64 seq = 2;
+  uint64 ack_seq = 3;
+}
+
+// ---- kv ----
+
+message OpenSessionRequest {}
+message OpenSessionResponse {
+  ResponseHeader header = 1;
+  uint64 client_id = 2;
+}
+
+message RangeRequest {
+  bytes key = 1;
+  // empty: single key. "\x00": every key >= key. otherwise [key, range_end).
+  bytes range_end = 2;
+  uint64 limit = 3;
+  bool serializable = 4;
+  bool keys_only = 5;
+  bool count_only = 6;
+  // read as of this revision, 0 means latest. Fails with COMPACTED or FUTURE_REVISION.
+  uint64 revision = 7;
+}
+
+message RangeResponse {
+  ResponseHeader header = 1;
+  repeated KeyValue kvs = 2;
+  bool more = 3;
+  uint64 count = 4;
+}
+
+message PutRequest {
+  RequestMeta meta = 1;
+  bytes key = 2;
+  bytes value = 3;
+  uint64 lease = 4;
+  bool prev_kv = 5;
+}
+
+message PutResponse {
+  ResponseHeader header = 1;
+  KeyValue prev_kv = 2;
+}
+
+message DeleteRangeRequest {
+  RequestMeta meta = 1;
+  bytes key = 2;
+  bytes range_end = 3;
+  bool prev_kv = 4;
+}
+
+message DeleteRangeResponse {
+  ResponseHeader header = 1;
+  uint64 deleted = 2;
+  repeated KeyValue prev_kvs = 3;
+}
+
+message Compare {
+  enum Result {
+    EQUAL = 0;
+    GREATER = 1;
+    LESS = 2;
+    NOT_EQUAL = 3;
+  }
+  enum Target {
+    VERSION = 0;
+    CREATE = 1;
+    MOD = 2;
+    VALUE = 3;
+    LEASE = 4;
+  }
+  Result result = 1;
+  Target target = 2;
+  bytes key = 3;
+  oneof target_union {
+    uint64 version = 4;
+    uint64 create_revision = 5;
+    uint64 mod_revision = 6;
+    bytes value = 7;
+    uint64 lease = 8;
+  }
+}
+
+message RequestOp {
+  oneof request {
+    RangeRequest range = 1;
+    PutRequest put = 2;
+    DeleteRangeRequest delete_range = 3;
+  }
+}
+
+message ResponseOp {
+  oneof response {
+    RangeResponse range = 1;
+    PutResponse put = 2;
+    DeleteRangeResponse delete_range = 3;
+  }
+}
+
+message TxnRequest {
+  RequestMeta meta = 1;
+  repeated Compare compare = 2;
+  repeated RequestOp success = 3;
+  repeated RequestOp failure = 4;
+}
+
+message TxnResponse {
+  ResponseHeader header = 1;
+  bool succeeded = 2;
+  repeated ResponseOp responses = 3;
+}
+
+service KV {
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  rpc Range(RangeRequest) returns (RangeResponse);
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse);
+  rpc Txn(TxnRequest) returns (TxnResponse);
+  // drops history below revision; the latest version of every live key is kept
+  rpc Compact(CompactRequest) returns (CompactResponse);
+}
+
+message CompactRequest {
+  uint64 revision = 1;
+}
+
+message CompactResponse {
+  ResponseHeader header = 1;
+}
+
+// ---- watch ----
+
+message Event {
+  enum Type {
+    PUT = 0;
+    DELETE = 1;
+  }
+  Type type = 1;
+  KeyValue kv = 2;
+  KeyValue prev_kv = 3;
+}
+
+message WatchCreateRequest {
+  bytes key = 1;
+  bytes range_end = 2;
+  // 0 means "from now". Otherwise replay history starting at this revision.
+  uint64 start_revision = 3;
+  bool prev_kv = 4;
+}
+
+message WatchCancelRequest {
+  uint64 watch_id = 1;
+}
+
+message WatchRequest {
+  oneof request {
+    WatchCreateRequest create = 1;
+    WatchCancelRequest cancel = 2;
+  }
+}
+
+message WatchResponse {
+  ResponseHeader header = 1;
+  uint64 watch_id = 2;
+  bool created = 3;
+  bool canceled = 4;
+  string cancel_reason = 5;
+  // set when start_revision was already compacted away
+  uint64 compact_revision = 6;
+  repeated Event events = 7;
+}
+
+service Watch {
+  rpc Watch(stream WatchRequest) returns (stream WatchResponse);
+}
+
+// ---- lease ----
+
+message LeaseGrantRequest {
+  RequestMeta meta = 1;
+  uint64 ttl_ms = 2;
+}
+
+message LeaseGrantResponse {
+  ResponseHeader header = 1;
+  uint64 id = 2;
+  uint64 ttl_ms = 3;
+}
+
+message LeaseRevokeRequest {
+  uint64 id = 1;
+}
+
+message LeaseRevokeResponse {
+  ResponseHeader header = 1;
+}
+
+message LeaseKeepAliveRequest {
+  uint64 id = 1;
+}
+
+message LeaseKeepAliveResponse {
+  ResponseHeader header = 1;
+  uint64 id = 2;
+  // 0 when the lease no longer exists
+  uint64 ttl_ms = 3;
+}
+
+message LeaseTimeToLiveRequest {
+  uint64 id = 1;
+  bool keys = 2;
+}
+
+message LeaseTimeToLiveResponse {
+  ResponseHeader header = 1;
+  uint64 id = 2;
+  int64 remaining_ms = 3;
+  uint64 granted_ttl_ms = 4;
+  repeated bytes keys = 5;
+}
+
+service Lease {
+  rpc Grant(LeaseGrantRequest) returns (LeaseGrantResponse);
+  rpc Revoke(LeaseRevokeRequest) returns (LeaseRevokeResponse);
+  rpc KeepAlive(stream LeaseKeepAliveRequest) returns (stream LeaseKeepAliveResponse);
+  rpc TimeToLive(LeaseTimeToLiveRequest) returns (LeaseTimeToLiveResponse);
+}
+
+// ---- lock ----
+
+message LockRequest {
+  bytes name = 1;
+  uint64 lease = 2;
+  // fail fast instead of queueing behind the current owner
+  bool try = 3;
+}
+
+message LockResponse {
+  ResponseHeader header = 1;
+  bool acquired = 2;
+  // strictly increases with every grant of the same lock
+  uint64 fencing_token = 3;
+}
+
+message UnlockRequest {
+  bytes name = 1;
+  uint64 lease = 2;
+}
+
+message UnlockResponse {
+  ResponseHeader header = 1;
+}
+
+service Lock {
+  rpc Lock(LockRequest) returns (LockResponse);
+  rpc Unlock(UnlockRequest) returns (UnlockResponse);
+}
+
+// ---- cluster ----
+
+message StatusRequest {}
+
+message StatusResponse {
+  ResponseHeader header = 1;
+  uint64 leader_id = 2;
+  string state = 3;
+  uint64 commit_index = 4;
+  uint64 applied_index = 5;
+  uint64 last_index = 6;
+  uint64 first_index = 7;
+  uint64 snapshot_index = 8;
+  uint64 keys = 9;
+  uint64 leases = 10;
+  uint64 locks = 11;
+  uint64 watchers = 12;
+}
+
+message Member {
+  uint64 id = 1;
+  string addr = 2;
+  bool is_leader = 3;
+  // learners get the log but do not vote or count toward quorums
+  bool learner = 4;
+}
+
+message MemberAddRequest {
+  uint64 id = 1;
+  string addr = 2;
+  // add as a non-voting learner; promote it once it has caught up
+  bool learner = 3;
+}
+
+message MemberPromoteRequest {
+  uint64 id = 1;
+}
+
+message TransferLeaderRequest {
+  // 0 lets the leader pick the most up-to-date voter
+  uint64 target = 1;
+}
+
+message TransferLeaderResponse {
+  ResponseHeader header = 1;
+}
+
+message MemberRemoveRequest {
+  uint64 id = 1;
+}
+
+message MemberListRequest {}
+
+message MemberListResponse {
+  ResponseHeader header = 1;
+  repeated Member members = 2;
+}
+
+service Cluster {
+  rpc Status(StatusRequest) returns (StatusResponse);
+  // One membership change at a time. Start the new node with kvd -join first,
+  // it only starts receiving the log once it is a member.
+  rpc MemberAdd(MemberAddRequest) returns (MemberListResponse);
+  rpc MemberRemove(MemberRemoveRequest) returns (MemberListResponse);
+  // turns a learner into a voter, fails with LEARNER_NOT_CAUGHT_UP while it lags
+  rpc MemberPromote(MemberPromoteRequest) returns (MemberListResponse);
+  rpc MemberList(MemberListRequest) returns (MemberListResponse);
+  // hands leadership to another voter; must be sent to the current leader
+  rpc TransferLeader(TransferLeaderRequest) returns (TransferLeaderResponse);
+}
+
+// ---- state machine commands (what actually goes through the raft log) ----
+
+message LeaseExpireRequest {
+  repeated uint64 ids = 1;
+}
+
+message RefreshLeasesRequest {}
+
+message SessionExpireRequest {
+  uint64 idle_ms = 1;
+}
+
+message Command {
+  // leader wall clock at proposal time; the FSM's only source of time
+  int64 timestamp_ns = 1;
+  oneof body {
+    OpenSessionRequest open_session = 10;
+    PutRequest put = 11;
+    DeleteRangeRequest delete_range = 12;
+    TxnRequest txn = 13;
+    LeaseGrantRequest lease_grant = 14;
+    LeaseRevokeRequest lease_revoke = 15;
+    LeaseKeepAliveRequest lease_keep_alive = 16;
+    LeaseExpireRequest lease_expire = 17;
+    RefreshLeasesRequest refresh_leases = 18;
+    LockRequest lock = 19;
+    UnlockRequest unlock = 20;
+    SessionExpireRequest session_expire = 21;
+    CompactRequest compact = 22;
+  }
+}
+
+message LockResult {
+  // true when ownership was granted by this command
+  bool acquired = 1;
+  uint64 fencing_token = 2;
+  // position in the wait queue (0 = owner)
+  uint64 queue_pos = 3;
+}
+
+message CommandResult {
+  string error_code = 1;
+  string error_message = 2;
+  oneof body {
+    OpenSessionResponse open_session = 10;
+    PutResponse put = 11;
+    DeleteRangeResponse delete_range = 12;
+    TxnResponse txn = 13;
+    LeaseGrantResponse lease_grant = 14;
+    LeaseRevokeResponse lease_revoke = 15;
+    LeaseKeepAliveResponse lease_keep_alive = 16;
+    LockResult lock = 19;
+    UnlockResponse unlock = 20;
+    CompactResponse compact = 21;
+  }
+}
+
+// ---- fsm snapshot ----
+
+message SnapLease {
+  uint64 id = 1;
+  int64 ttl_ns = 2;
+  int64 deadline_ns = 3;
+}
+
+message SnapLock {
+  bytes name = 1;
+  uint64 owner = 2;
+  uint64 token = 3;
+  repeated uint64 waiters = 4;
+}
+
+message SnapSession {
+  uint64 client_id = 1;
+  int64 last_active_ns = 2;
+  uint64 ack_seq = 3;
+  map<uint64, CommandResult> results = 4;
+}
+
+message SnapVersion {
+  uint64 rev = 1;
+  uint64 create_rev = 2;
+  uint64 version = 3;
+  uint64 lease = 4;
+  bytes value = 5;
+  bool tombstone = 6;
+}
+
+message SnapKeyHistory {
+  bytes key = 1;
+  repeated SnapVersion versions = 2;
+}
+
+message FSMSnapshot {
+  uint64 revision = 1;
+  uint64 applied = 2;
+  int64 clock_ns = 3;
+  repeated KeyValue kvs = 4;
+  repeated SnapLease leases = 5;
+  repeated SnapLock locks = 6;
+  repeated SnapSession sessions = 7;
+  uint64 compact_rev = 8;
+  repeated SnapKeyHistory history = 9;
+}
+
+// ---- raft transport (node to node) ----
+
+message LogEntry {
+  uint64 index = 1;
+  uint64 term = 2;
+  uint32 type = 3;
+  bytes data = 4;
+}
+
+message RaftMessage {
+  uint32 type = 1;
+  uint64 term = 2;
+  uint64 from = 3;
+  uint64 to = 4;
+  uint64 log_index = 5;
+  uint64 log_term = 6;
+  uint64 commit = 7;
+  uint64 round = 8;
+  repeated LogEntry entries = 9;
+  bool reject = 10;
+  uint64 conflict_index = 11;
+  uint64 conflict_term = 12;
+  uint64 snap_index = 13;
+  uint64 snap_term = 14;
+  bytes snap_data = 15;
+  // snapshots are split into chunks on the wire: offset of this chunk and total size
+  uint64 snap_offset = 16;
+  uint64 snap_total = 17;
+  repeated Member snap_members = 18;
+  string from_addr = 19; // sender's dial address, lets a joining node answer before it knows the config
+  bool transfer = 20;
+}
+
+message StreamAck {}
+
+service RaftTransport {
+  rpc Stream(stream RaftMessage) returns (StreamAck);
+}
