@@ -140,6 +140,7 @@ Run your own: `go run ./cmd/kvbench -endpoints=host1:7001,host2:7001,host3:7001 
   kvctl member list
   kvctl member remove 1
   ```
+  `member replace OLD NEW ADDR` does add, promote and remove in one go, and can be rerun.
   `member add` brings the node in as a non-voting learner and promotes it once it has caught up,
   so a failure right after the add cannot cost you the quorum. `add-learner` and `promote` split the two steps.
 * `kvd` flags worth knowing: `-compact-retain` (how many revisions stay readable), `-snapshot-every`, `-tick`, `-election-ticks`,

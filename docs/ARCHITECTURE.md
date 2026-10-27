@@ -271,6 +271,10 @@ the store exactly as it was after revision R.
   key it keeps the newest version at or below `R` (dropped if it is a tombstone)
   and everything newer, so `R` itself stays readable. Repeating a compaction is a
   no-op, which makes retries after an ambiguous failure safe.
+  The floor rises at once, but the cleanup runs in slices of 256 keys at the end of
+  each applied command, so the apply loop never stalls on a big store. It is driven by
+  the log, so replicas do identical work at identical indexes, and a snapshot taken
+  mid-sweep carries the cursor. A newer compaction restarts the sweep.
 * The leader proposes a compaction every few seconds so that only the last
   `-compact-retain` revisions (default 100000) stay readable; 0 turns that off.
 * Snapshots store only the versions older than the live one (the live one is the
@@ -317,17 +321,17 @@ the store exactly as it was after revision R.
 ## Non-goals and known limits
 
 * **One membership change at a time.** No joint consensus, so replacing a node
-  is two changes (add, then remove). A learner that is promoted must be within
+  is several changes (add, promote, remove); `member replace` runs them for you and can be rerun. A learner that is promoted must be within
   256 entries of the leader; the client retries until it is.
 * **Sharding is client-side and static.** Each cluster is one Raft group bounded by
   one node's memory; `client.Sharded` spreads keys over several clusters by hash. The
   shard count cannot change without moving keys by hand, there is no cross-shard
   transaction or snapshot read, and no rebalancing.
-* **No MVCC reads.** Revisions order writes and drive watches, but only the
-  latest value of a key is stored.
+* **History lives in memory.** Old versions sit next to the live tree until compaction
+  removes them, so a hot key with a long `-compact-retain` window costs memory.
 * **Writes and linearizable reads are served by the leader**; followers answer
   `NOT_LEADER` with a hint, or serve `serializable` reads.
 * Snapshots no longer stall apply for their whole duration: the state machine
   clones its B-trees copy-on-write (O(1)) and a worker serialises and fsyncs the
   clone while applying continues. Capture still copies leases, locks and session
-  caches, and compaction still walks every key. Snapshots are full, not incremental.
+  caches, and snapshots are full, not incremental.
