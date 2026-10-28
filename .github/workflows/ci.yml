@@ -2,10 +2,14 @@ name: ci
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -24,3 +28,34 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make chaos
+
+  # the image runs as a non-root user; this is what catches a data directory it cannot write
+  docker:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t kvcoord .
+      - name: one node starts, accepts a write and reads it back
+        run: |
+          docker run -d --name kv -p 7001:7001 kvcoord -id=1 -peers=1=127.0.0.1:7001 -data-dir=/data
+          for i in $(seq 1 30); do
+            docker exec kv /usr/local/bin/kvctl -endpoints 127.0.0.1:7001 put smoke ok && break
+            sleep 1
+          done
+          test "$(docker exec kv /usr/local/bin/kvctl -endpoints 127.0.0.1:7001 get smoke | tail -1)" = ok
+          docker logs kv
+
+  fuzz:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: |
+          for t in wal:FuzzReadRecord wal:FuzzOpenAnySegment wal:FuzzReadSnapFile wal:FuzzMembersCodec \
+                   fsm:FuzzApplyNeverPanics fsm:FuzzSnapshotRestoreExact raft:FuzzConfChange; do
+            go test -run='^$' -fuzz="^${t#*:}\$" -fuzztime=2m ./internal/${t%%:*}
+          done
