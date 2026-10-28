@@ -134,6 +134,20 @@ func invariantRun(t *testing.T, seed uint64) {
 	sample()
 
 	c.waitApplied(len(acked) + 1)
+	// proposals whose ack was lost can still commit after this point, so give
+	// the slow replicas time to reach the same length before comparing
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		same := true
+		ref := fmt.Sprint(c.mem[c.ids[0]].fsm.snapshotData())
+		for _, id := range c.ids[1:] {
+			if fmt.Sprint(c.mem[id].fsm.snapshotData()) != ref {
+				same = false
+			}
+		}
+		if same {
+			break
+		}
+	}
 	c.assertSame()
 
 	have := map[string]bool{}
