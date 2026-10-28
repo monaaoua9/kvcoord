@@ -6,6 +6,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"slices"
 )
 
 const (
@@ -56,14 +57,32 @@ func readRecord(r *bufio.Reader) (record, int64, error) {
 	if length == 0 || length > maxRecord {
 		return record{}, 0, errTorn
 	}
-	body := make([]byte, length)
-	if _, err := io.ReadFull(r, body); err != nil {
+	body, err := readBody(r, int(length))
+	if err != nil {
 		return record{}, 0, errTorn
 	}
 	if crc32.Checksum(body, crcTable) != crc {
 		return record{}, 0, errTorn
 	}
 	return record{typ: body[0], payload: body[1:]}, int64(headerSize + length), nil
+}
+
+// readBody reads n bytes but only allocates as data really arrives: the length
+// came from a header that may be garbage, and trusting it would let a damaged
+// file demand gigabytes during recovery.
+func readBody(r io.Reader, n int) ([]byte, error) {
+	const chunk = 1 << 20
+	buf := make([]byte, 0, min(n, chunk))
+	for len(buf) < n {
+		step := min(n-len(buf), chunk)
+		buf = slices.Grow(buf, step)
+		m, err := io.ReadFull(r, buf[len(buf):len(buf)+step])
+		buf = buf[:len(buf)+m]
+		if err != nil {
+			return nil, err
+		}
+	}
+	return buf, nil
 }
 
 func putU64s(vals ...uint64) []byte {
