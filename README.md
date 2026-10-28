@@ -129,6 +129,19 @@ so read these as a floor for the code path, not as cluster capacity.
 | 50/50 mixed | 5,838 | 9.8 ms | 27.3 ms |
 | serializable get (any node) | 21,058 | 2.4 ms | 11.4 ms |
 
+The same workload against the `deploy/docker-compose.yml` cluster (three containers, separate network
+namespaces and volumes, Docker Desktop on the same machine, client on the host through published
+ports) is slower, mostly Docker Desktop's port forwarding and VM disk:
+
+| workload | ops/s | p50 | p99 |
+|---|---|---|---|
+| put | 2,040 | 27.8 ms | 83.5 ms |
+| linearizable get | 6,400 | 8.8 ms | 29.3 ms |
+| 50/50 mixed | 1,960 | 31.0 ms | 70.3 ms |
+| serializable get | 9,918 | 5.3 ms | 22.6 ms |
+
+Still one physical machine: there is no real network latency or independent disk between nodes.
+
 Run your own: `go run ./cmd/kvbench -endpoints=host1:7001,host2:7001,host3:7001 -mix=mixed -c 64`.
 
 ## Operating notes
@@ -146,6 +159,9 @@ Run your own: `go run ./cmd/kvbench -endpoints=host1:7001,host2:7001,host3:7001 
 * `kvd` flags worth knowing: `-compact-retain` (how many revisions stay readable), `-snapshot-every`, `-tick`, `-election-ticks`,
   `-min-lease-ttl`, `-metrics-addr`, and `-tls-cert/-tls-key/-tls-ca` (a CA turns on mutual TLS
   for clients and for node-to-node traffic).
+* Authentication is opt-in: `-auth-tokens-file` with `token role` lines (read, write, admin, peer)
+  plus `-peer-token`; clients use `kvctl -token` / `KVCTL_TOKEN` or `client.Config.Token`. Use TLS
+  with it. See the architecture doc for what each role may call.
 * `/metrics` (Prometheus text), `/healthz`, `/readyz` on `-metrics-addr`.
 * Lock and lease expiry use wall clocks on the leader. That can only affect *liveness*
   (a lease may live a little longer or shorter than its TTL). For safety, make the protected

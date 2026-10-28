@@ -232,6 +232,28 @@ begins with the same history. After that:
   caught up; `add-learner` and `promote` do the two steps by hand. `remove` and
   `list` do the rest.
 
+## Authentication
+
+Off by default. `kvd -auth-tokens-file F` turns it on; each line of F is `token role`
+(tokens at least 16 characters, `#` comments). A gRPC interceptor pair checks every call:
+
+| role | may call |
+|---|---|
+| `read` | Range, Watch, TimeToLive, Status, MemberList |
+| `write` | everything `read` can, plus Put, Delete, Txn, sessions, leases, locks |
+| `admin` | everything, including Compact, membership changes, leader transfer |
+| `peer` | only the node-to-node Raft stream, and nothing else |
+
+RPCs missing from the table need `admin`, so a new method is closed until someone decides.
+Tokens are compared in constant time. Nodes send `-peer-token` (or `KVD_PEER_TOKEN`) to each
+other and refuse to start with a token file but no peer token. A `peer` token cannot read
+client data and a client token cannot join the Raft stream. Errors are `UNAUTHENTICATED`
+and `PERMISSION_DENIED`.
+
+Tokens travel in a request header: use TLS (`-tls-cert`, `-tls-key`, `-tls-ca`) whenever
+they are on, otherwise anyone on the path can read them. There are no per-key permissions.
+`/metrics` and `/healthz` are not authenticated, bind them to a private interface.
+
 ## Sharding
 
 There is no coordinator. `client.NewSharded` takes the endpoints of N independent
@@ -310,6 +332,14 @@ the store exactly as it was after revision R.
   action. Locks: a chaos test with five workers asserts one holder at a time and
   strictly increasing fencing tokens; breaking exclusion in the state machine makes
   it fail.
+* Raft invariants: random partitions, crashes and loss against five nodes while a
+  monitor checks that no term ever has two leaders, every acknowledged proposal is in
+  the final log, and replicas agree; letting a node vote twice makes it fail.
+* Fuzzing (`go test -fuzz`): WAL framing and segment recovery, snapshot files, membership
+  encoding, config changes, and arbitrary bytes applied as commands to the state machine.
+  The first run found that a corrupt WAL length field could make recovery allocate
+  gigabytes; records are now read in 1 MiB steps. Authentication: every role against
+  every kind of call, in-process and with real processes sharing a peer token.
 * MVCC: a model test replays 1500 random writes, deletes, lease expiries and
   compactions, remembers the full state after each revision and checks that every
   readable revision reproduces it, on the live machine and on one restored from a
