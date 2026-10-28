@@ -31,6 +31,7 @@ var (
 type Config struct {
 	Endpoints      []string
 	Creds          credentials.TransportCredentials
+	Token          string        // bearer token for servers that require authentication
 	RequestTimeout time.Duration // per attempt; the caller's context bounds the whole call
 }
 
@@ -39,7 +40,8 @@ type Client struct {
 
 	mu     sync.Mutex
 	conns  map[string]*grpc.ClientConn
-	leader int // index into Endpoints, best guess
+	leader int    // index into Endpoints, best guess
+	hint   string // leader address learned from a redirect, tried before the configured ones
 	closed bool
 
 	sessMu   sync.Mutex
@@ -78,6 +80,9 @@ func (c *Client) Close() error {
 func (c *Client) endpoint() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.hint != "" {
+		return c.hint
+	}
 	return c.cfg.Endpoints[c.leader%len(c.cfg.Endpoints)]
 }
 
@@ -90,7 +95,7 @@ func (c *Client) conn(addr string) (*grpc.ClientConn, error) {
 	if cc := c.conns[addr]; cc != nil {
 		return cc, nil
 	}
-	cc, err := grpc.NewClient(addr, grpc.WithTransportCredentials(c.cfg.Creds))
+	cc, err := grpc.NewClient(addr, grpc.WithTransportCredentials(c.cfg.Creds), grpc.WithPerRPCCredentials(bearer(c.cfg.Token)))
 	if err != nil {
 		return nil, err
 	}
@@ -100,23 +105,26 @@ func (c *Client) conn(addr string) (*grpc.ClientConn, error) {
 
 func (c *Client) rotate() {
 	c.mu.Lock()
+	// a hint that failed may simply be an address only the cluster can resolve
+	c.hint = ""
 	c.leader++
 	c.mu.Unlock()
 }
 
-// setLeader remembers addr as the leader; addresses we were not configured
-// with are learned from the redirect.
+// setLeader remembers addr as the leader. An address we were not configured with
+// is only a hint: it is tried first, and dropped (never added to Endpoints) the
+// first time it fails, because a client outside the cluster network, behind NAT or
+// in front of containers, often cannot resolve what the nodes call themselves.
 func (c *Client) setLeader(addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i, e := range c.cfg.Endpoints {
 		if e == addr {
-			c.leader = i
+			c.leader, c.hint = i, ""
 			return
 		}
 	}
-	c.cfg.Endpoints = append(c.cfg.Endpoints, addr)
-	c.leader = len(c.cfg.Endpoints) - 1
+	c.hint = addr
 }
 
 func retryable(err error) bool {
@@ -439,3 +447,14 @@ func (c *Client) Endpoints() []string {
 	defer c.mu.Unlock()
 	return append([]string(nil), c.cfg.Endpoints...)
 }
+
+type bearer string
+
+func (b bearer) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	if b == "" {
+		return nil, nil
+	}
+	return map[string]string{"authorization": "Bearer " + string(b)}, nil
+}
+
+func (b bearer) RequireTransportSecurity() bool { return false }
