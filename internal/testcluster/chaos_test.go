@@ -338,7 +338,15 @@ func assertReplicasIdentical(t *testing.T, c *testcluster.Cluster) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("replicas never converged, applied indexes %v", applied)
+			for _, id := range c.IDs() {
+				s := c.Server(id)
+				if s == nil {
+					t.Logf("node %d: down", id)
+					continue
+				}
+				t.Logf("node %d: status %+v members %+v", id, s.Node().Status(), s.Node().Members())
+			}
+			t.Fatalf("replicas never converged, applied indexes %v of %v", applied, c.Members())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
