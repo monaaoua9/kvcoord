@@ -22,11 +22,12 @@ func main() {
 		size  = flag.Int("size", 128, "value size in bytes")
 		keys  = flag.Int("keys", 10000, "key space")
 		mix   = flag.String("mix", "put", "put | get | mixed (50/50) | get-serializable")
+		token = flag.String("token", os.Getenv("KVCTL_TOKEN"), "bearer token")
 		ready = flag.Duration("wait", 30*time.Second, "how long to wait for the cluster")
 	)
 	flag.Parse()
 
-	cl, err := client.New(client.Config{Endpoints: strings.Split(*eps, ","), RequestTimeout: 5 * time.Second})
+	cl, err := client.New(client.Config{Endpoints: strings.Split(*eps, ","), RequestTimeout: 5 * time.Second, Token: *token})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -34,12 +35,13 @@ func main() {
 	defer cl.Close()
 
 	wctx, cancel := context.WithTimeout(context.Background(), *ready)
+	var probeErr error
 	for {
-		if _, err := cl.Put(wctx, "bench/probe", "x"); err == nil {
+		if _, probeErr = cl.Put(wctx, "bench/probe", "x"); probeErr == nil {
 			break
 		}
 		if wctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "cluster not ready")
+			fmt.Fprintln(os.Stderr, "cluster not ready:", probeErr)
 			os.Exit(1)
 		}
 		time.Sleep(100 * time.Millisecond)

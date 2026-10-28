@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/monaaoua9/kvcoord/client"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var kvdBin string
@@ -48,6 +50,8 @@ type cluster struct {
 	peers string
 	addrs []string
 	procs []*proc
+	extra []string // more kvd flags
+	env   []string
 }
 
 func freeAddrs(t *testing.T, n int) []string {
@@ -87,9 +91,12 @@ func newCluster(t *testing.T, n int) *cluster {
 
 func (c *cluster) start(i int) {
 	p := c.procs[i]
-	cmd := exec.Command(kvdBin,
+	args := []string{
 		"-id", fmt.Sprint(p.id), "-peers", c.peers, "-data-dir", p.data,
-		"-tick", "20ms", "-snapshot-every", "50", "-min-lease-ttl", "100ms", "-log-level", logLevel())
+		"-tick", "20ms", "-snapshot-every", "50", "-min-lease-ttl", "100ms", "-log-level", logLevel(),
+	}
+	cmd := exec.Command(kvdBin, append(args, c.extra...)...)
+	cmd.Env = append(os.Environ(), c.env...)
 	if os.Getenv("KV_E2E_VERBOSE") != "" {
 	}
 	if err := cmd.Start(); err != nil {
@@ -313,4 +320,56 @@ func logLevel() string {
 		return v
 	}
 	return "warn"
+}
+
+func TestAuthenticatedCluster(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns processes")
+	}
+	const (
+		reader = "e2e-read-token-0000"
+		writer = "e2e-write-token-000"
+		peer   = "e2e-peer-token-0000"
+	)
+	tokens := filepath.Join(t.TempDir(), "tokens")
+	os.WriteFile(tokens, []byte(reader+" read\n"+writer+" write\n"+peer+" peer\n"), 0o600)
+
+	c := newCluster(t, 3)
+	c.extra = []string{"-auth-tokens-file", tokens}
+	c.env = []string{"KVD_PEER_TOKEN=" + peer}
+	for i := range c.procs {
+		c.start(i)
+	}
+
+	mk := func(tok string) *client.Client {
+		cl, err := client.New(client.Config{Endpoints: c.addrs, RequestTimeout: 2 * time.Second, Token: tok})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cl.Close() })
+		return cl
+	}
+	w, r, anon := mk(writer), mk(reader), mk("")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	for {
+		// the nodes can only elect a leader if their peer tokens are accepted
+		if _, err := w.Put(ctx, "k", "v"); err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatal("authenticated cluster never became writable")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if resp, err := r.Get(ctx, "k"); err != nil || len(resp.Kvs) != 1 {
+		t.Fatalf("reader: %v", err)
+	}
+	if _, err := r.Put(ctx, "k", "x"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("reader write: %v", err)
+	}
+	if _, err := anon.Get(ctx, "k"); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("anonymous read: %v", err)
+	}
 }

@@ -22,6 +22,7 @@ type Options struct {
 	Seed          uint64
 	SnapshotEvery uint64
 	CompactRetain uint64
+	AuthTokens    map[string]string
 	Verbose       bool
 }
 
@@ -90,7 +91,8 @@ func (c *Cluster) boot(n *node, l net.Listener) {
 		SnapshotEvery: c.opts.SnapshotEvery, SnapshotTrailing: 10,
 		MinLeaseTTL: 100 * time.Millisecond, SessionTTL: time.Hour,
 		CompactRetain: c.opts.CompactRetain, CompactEvery: 100 * time.Millisecond,
-		Storage: n.store, Transport: c.Net.Transport(n.id), Listener: l,
+		AuthTokens: c.opts.AuthTokens,
+		Storage:    n.store, Transport: c.Net.Transport(n.id), Listener: l,
 		Logger: logger,
 	})
 	if err != nil {
@@ -142,6 +144,17 @@ func (c *Cluster) Server(id raft.NodeID) *server.Server {
 func (c *Cluster) Client() *client.Client {
 	c.t.Helper()
 	cl, err := client.New(client.Config{Endpoints: c.Endpoints(), RequestTimeout: 2 * time.Second})
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	c.t.Cleanup(func() { cl.Close() })
+	return cl
+}
+
+// ClientWithToken is Client for clusters that require authentication.
+func (c *Cluster) ClientWithToken(token string) *client.Client {
+	c.t.Helper()
+	cl, err := client.New(client.Config{Endpoints: c.Endpoints(), RequestTimeout: 2 * time.Second, Token: token})
 	if err != nil {
 		c.t.Fatal(err)
 	}

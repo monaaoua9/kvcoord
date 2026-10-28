@@ -712,3 +712,79 @@ func TestReplaceNode(t *testing.T) {
 		t.Fatalf("second replace: %v", err)
 	}
 }
+
+func TestRolesAreEnforced(t *testing.T) {
+	const (
+		rd, wr, ad, pe = "read-token-0000000", "write-token-000000", "admin-token-000000", "peer-token-0000000"
+	)
+	c := testcluster.New(t, testcluster.Options{Nodes: 3, AuthTokens: map[string]string{rd: "read", wr: "write", ad: "admin", pe: "peer"}})
+	c.Leader(3 * time.Second)
+	ctx := ctxT(t, 30*time.Second)
+
+	anon, reader, writer, admin, peer := c.Client(), c.ClientWithToken(rd), c.ClientWithToken(wr), c.ClientWithToken(ad), c.ClientWithToken(pe)
+	bad := c.ClientWithToken("not-a-real-token-xx")
+
+	if _, err := writer.Put(ctx, "k", "v"); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, cl := range map[string]*client.Client{"no token": anon, "wrong token": bad} {
+		if _, err := cl.Get(ctx, "k"); kvpb.Reason(err) != kvpb.ErrUnauthenticated {
+			t.Errorf("%s: get gave %v", name, err)
+		}
+	}
+
+	if r, err := reader.Get(ctx, "k"); err != nil || len(r.Kvs) != 1 {
+		t.Fatalf("reader cannot read: %v", err)
+	}
+	if _, err := reader.Put(ctx, "k", "x"); kvpb.Reason(err) != kvpb.ErrPermissionDenied {
+		t.Errorf("reader wrote: %v", err)
+	}
+	if _, err := reader.Delete(ctx, "k"); kvpb.Reason(err) != kvpb.ErrPermissionDenied {
+		t.Errorf("reader deleted: %v", err)
+	}
+	if _, err := reader.Members(ctx); err != nil {
+		t.Errorf("reader cannot list members: %v", err)
+	}
+
+	if _, err := writer.Delete(ctx, "gone"); err != nil {
+		t.Errorf("writer cannot delete: %v", err)
+	}
+	if err := writer.Compact(ctx, 1); kvpb.Reason(err) != kvpb.ErrPermissionDenied {
+		t.Errorf("writer compacted: %v", err)
+	}
+	if _, err := writer.MemberRemove(ctx, 2); kvpb.Reason(err) != kvpb.ErrPermissionDenied {
+		t.Errorf("writer changed membership: %v", err)
+	}
+	if _, err := writer.NewSession(ctx, time.Second); err != nil {
+		t.Errorf("writer cannot open a session: %v", err)
+	}
+
+	if err := admin.TransferLeader(ctx, 0); err != nil {
+		t.Errorf("admin cannot transfer leadership: %v", err)
+	}
+	if err := reader.TransferLeader(ctx, 0); kvpb.Reason(err) != kvpb.ErrPermissionDenied {
+		t.Errorf("reader transferred leadership: %v", err)
+	}
+
+	// a peer token is for node-to-node traffic only
+	if _, err := peer.Get(ctx, "k"); kvpb.Reason(err) != kvpb.ErrPermissionDenied {
+		t.Errorf("peer token read client data: %v", err)
+	}
+
+	// a watch needs only read
+	wctx, stop := context.WithTimeout(ctx, 3*time.Second)
+	defer stop()
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		writer.Put(ctx, "w", "1")
+	}()
+	select {
+	case ev := <-reader.Watch(wctx, "w"):
+		if ev.Err != nil {
+			t.Fatalf("reader watch: %v", ev.Err)
+		}
+	case <-wctx.Done():
+		t.Fatal("reader watch saw nothing")
+	}
+}

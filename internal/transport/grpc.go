@@ -31,6 +31,7 @@ type GRPC struct {
 
 	self  raft.NodeID
 	addr  string // our own dial address, sent along so strangers can answer
+	token string // sent to peers as a bearer token, empty when auth is off
 	log   *slog.Logger
 	creds credentials.TransportCredentials
 
@@ -41,12 +42,12 @@ type GRPC struct {
 	wg    sync.WaitGroup
 }
 
-func NewGRPC(self raft.NodeID, addrs map[raft.NodeID]string, creds credentials.TransportCredentials, log *slog.Logger) *GRPC {
+func NewGRPC(self raft.NodeID, addrs map[raft.NodeID]string, creds credentials.TransportCredentials, token string, log *slog.Logger) *GRPC {
 	if creds == nil {
 		creds = insecure.NewCredentials()
 	}
 	t := &GRPC{
-		self: self, addr: addrs[self], log: log.With("component", "raft-transport"), creds: creds,
+		self: self, token: token, addr: addrs[self], log: log.With("component", "raft-transport"), creds: creds,
 		peers: make(map[raft.NodeID]*peer), done: make(chan struct{}),
 	}
 	ms := make([]raft.Member, 0, len(addrs))
@@ -150,7 +151,7 @@ func (t *GRPC) Stream(s kvpb.RaftTransport_StreamServer) error {
 		if pm.Type == uint32(raft.MsgSnap) && pm.SnapTotal > 0 {
 			// chunks of one snapshot arrive in order on a single stream
 			if pm.SnapOffset == 0 {
-				asm = &snapAssembly{head: pm, buf: make([]byte, 0, pm.SnapTotal)}
+				asm = &snapAssembly{head: pm, buf: make([]byte, 0, min(pm.SnapTotal, chunkSize))}
 			}
 			if asm == nil || uint64(len(asm.buf)) != pm.SnapOffset {
 				asm = nil
@@ -233,6 +234,7 @@ func (p *peer) drain() {
 func (p *peer) pump() error {
 	conn, err := grpc.NewClient(p.addr,
 		grpc.WithTransportCredentials(p.t.creds),
+		grpc.WithPerRPCCredentials(bearer(p.t.token)),
 	)
 	if err != nil {
 		return err
@@ -334,3 +336,17 @@ func toProtoChunks(m raft.Message) []*kvpb.RaftMessage {
 	}
 	return out
 }
+
+// bearer attaches a token to every RPC. An empty token sends nothing.
+type bearer string
+
+func (b bearer) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
+	if b == "" {
+		return nil, nil
+	}
+	return map[string]string{"authorization": "Bearer " + string(b)}, nil
+}
+
+// the token may travel over plaintext in tests and trusted networks, which is why
+// the docs say to turn TLS on whenever tokens are used
+func (b bearer) RequireTransportSecurity() bool { return false }

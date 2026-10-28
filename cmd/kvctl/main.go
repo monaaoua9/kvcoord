@@ -42,6 +42,7 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "client key")
 	tlsCA := flag.String("tls-ca", "", "CA bundle, turns on TLS")
 	tlsName := flag.String("tls-server-name", "", "expected server name")
+	token := flag.String("token", envOr("KVCTL_TOKEN", ""), "bearer token when the cluster requires authentication")
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, usage)
 		flag.PrintDefaults()
@@ -60,7 +61,7 @@ func main() {
 			die(err)
 		}
 	}
-	cl, err := client.New(client.Config{Endpoints: strings.Split(*endpoints, ","), Creds: creds})
+	cl, err := client.New(client.Config{Endpoints: strings.Split(*endpoints, ","), Creds: creds, Token: *token})
 	if err != nil {
 		die(err)
 	}

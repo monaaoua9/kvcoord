@@ -46,6 +46,12 @@ type Config struct {
 	RequestTimeout time.Duration
 	WatchBuffer    int
 	HistoryLimit   int
+
+	// AuthTokens maps a secret token to a role (read, write, admin, peer). Empty
+	// means no authentication. Peers must present a "peer" token, see PeerToken.
+	AuthTokens map[string]string
+	// PeerToken is what this node sends to the other nodes.
+	PeerToken string
 	// CompactRetain keeps this many recent revisions readable; the leader compacts
 	// everything older. 0 turns automatic compaction off.
 	CompactRetain uint64
@@ -138,7 +144,7 @@ func New(cfg Config) (*Server, error) {
 		for id, a := range cfg.Peers {
 			addrs[id] = a
 		}
-		s.gt = transport.NewGRPC(cfg.NodeID, addrs, cfg.PeerCreds, s.log)
+		s.gt = transport.NewGRPC(cfg.NodeID, addrs, cfg.PeerCreds, cfg.PeerToken, s.log)
 		tr = s.gt
 	}
 
@@ -175,6 +181,13 @@ func New(cfg Config) (*Server, error) {
 	var opts []grpc.ServerOption
 	if cfg.ServerCreds != nil {
 		opts = append(opts, grpc.Creds(cfg.ServerCreds))
+	}
+	auth, err := newAuthn(cfg.AuthTokens)
+	if err != nil {
+		return nil, err
+	}
+	if auth != nil {
+		opts = append(opts, grpc.UnaryInterceptor(auth.unary), grpc.StreamInterceptor(auth.stream))
 	}
 	s.grpc = grpc.NewServer(opts...)
 	kvpb.RegisterKVServer(s.grpc, &kvService{s: s})

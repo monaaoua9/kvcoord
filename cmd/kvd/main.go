@@ -54,6 +54,8 @@ func main() {
 		tlsCA       = flag.String("tls-ca", "", "CA bundle, turns on mutual TLS")
 		tlsName     = flag.String("tls-server-name", "", "expected server name when dialing peers")
 		join        = flag.Bool("join", false, "start empty and wait to be added with kvctl member add; -peers needs only this node")
+		authFile    = flag.String("auth-tokens-file", "", "lines of 'token role' (read, write, admin, peer); turns authentication on")
+		peerToken   = flag.String("peer-token", os.Getenv("KVD_PEER_TOKEN"), "token this node presents to the other nodes, needs role peer there")
 		noSync      = flag.Bool("unsafe-no-fsync", false, "skip fsync: data loss on power failure, benchmarks only")
 	)
 	flag.Parse()
@@ -74,10 +76,21 @@ func main() {
 		fatal(err)
 	}
 
+	var tokens map[string]string
+	if *authFile != "" {
+		if tokens, err = server.LoadTokenFile(*authFile); err != nil {
+			fatal(err)
+		}
+		if *peerToken == "" {
+			fatal(fmt.Errorf("-auth-tokens-file needs -peer-token (or KVD_PEER_TOKEN) so the nodes can talk to each other"))
+		}
+	}
+
 	cfg := server.Config{
 		NodeID: *id, Peers: peers, Join: *join, Listen: *listen, DataDir: *dataDir, NoSync: *noSync,
 		TickInterval: *tick, ElectionTick: *electionTk, SnapshotEvery: *snapEvery,
 		MinLeaseTTL: *minTTL, CompactRetain: *compactKeep, Logger: logger,
+		AuthTokens: tokens, PeerToken: *peerToken,
 	}
 	if *tlsCert != "" {
 		var srvCreds, peerCreds credentials.TransportCredentials

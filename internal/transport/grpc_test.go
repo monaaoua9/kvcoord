@@ -25,14 +25,14 @@ func pair(t *testing.T) (a *GRPC, rcv sink) {
 		t.Fatal(err)
 	}
 	rcv = make(sink, 16)
-	b := NewGRPC(2, map[raft.NodeID]string{1: "unused", 2: lis.Addr().String()}, nil, log)
+	b := NewGRPC(2, map[raft.NodeID]string{1: "unused", 2: lis.Addr().String()}, nil, "", log)
 	b.SetReceiver(rcv)
 	srv := grpc.NewServer()
 	b.Register(srv)
 	go srv.Serve(lis)
 	t.Cleanup(func() { srv.Stop(); b.Close() })
 
-	a = NewGRPC(1, map[raft.NodeID]string{1: "unused", 2: lis.Addr().String()}, nil, log)
+	a = NewGRPC(1, map[raft.NodeID]string{1: "unused", 2: lis.Addr().String()}, nil, "", log)
 	t.Cleanup(a.Close)
 	return a, rcv
 }
