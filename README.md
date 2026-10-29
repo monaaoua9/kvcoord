@@ -52,6 +52,7 @@ determinism rules, the durability design and the failure model, and
 | `internal/server`, `internal/transport` | gRPC services and node-to-node transport |
 | `internal/linearize`, `internal/testcluster` | checker, fault-injecting in-process cluster, chaos tests |
 | `test/e2e` | real processes with hard kills |
+| `docs` | architecture, design decisions, benchmarks |
 
 Requires Go 1.27 (see `go.mod`) and, to regenerate the protobuf code, `protoc`.
 
