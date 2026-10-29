@@ -126,10 +126,10 @@ so read these as a floor for the code path, not as cluster capacity.
 
 | workload | ops/s | p50 | p99 |
 |---|---|---|---|
-| put | 6,500 | 9.0 ms | 24.1 ms |
-| linearizable get | 16,758 | 3.3 ms | 11.3 ms |
-| 50/50 mixed | 6,953 | 7.9 ms | 27.3 ms |
-| serializable get (any node) | 15,004 | 3.3 ms | 17.3 ms |
+| put | 6,561 | 8.8 ms | 33 ms |
+| linearizable get | 21,785 | 2.5 ms | 8.7 ms |
+| 50/50 mixed | 7,850 | 7.6 ms | 25 ms |
+| serializable get (any node) | 38,788 | 1.4 ms | 4.9 ms |
 
 The same workload against the `deploy/docker-compose.yml` cluster (three containers, separate network
 namespaces and volumes, Docker Desktop on the same machine, client on the host through published
