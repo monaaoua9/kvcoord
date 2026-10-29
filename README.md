@@ -142,6 +142,8 @@ ports) is slower, mostly Docker Desktop's port forwarding and VM disk:
 
 Still one physical machine: there is no real network latency or independent disk between nodes.
 
+The Docker table above is from an earlier run and wasn't repeated. Commands and caveats for the loopback numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
 Run your own: `go run ./cmd/kvbench -endpoints=host1:7001,host2:7001,host3:7001 -mix=mixed -c 64`.
 
 ## Operating notes
