@@ -34,7 +34,8 @@ runtime dependencies are gRPC, protobuf and a B-tree.
   third adds and removes nodes while clients run.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the write pipeline, the
-determinism rules, the durability design and the failure model.
+determinism rules, the durability design and the failure model, and
+[docs/DESIGN.md](docs/DESIGN.md) for a shorter list of the decisions behind them.
 
 ## Layout
 
