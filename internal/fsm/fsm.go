@@ -178,7 +178,10 @@ func (m *Machine) flushEvents() {
 	evs := append([]*kvpb.Event(nil), m.pending...)
 	m.hist = append(m.hist, histEntry{rev: m.rev, events: evs})
 	if over := len(m.hist) - m.opts.HistoryLimit; over > 0 {
-		m.hist = append([]histEntry(nil), m.hist[over:]...)
+		// reslice instead of copying: a full copy on every apply made writes
+		// ~40x slower once the history hit the limit. append reallocates (and
+		// drops the dead prefix) on its own every so often
+		m.hist = m.hist[over:]
 		m.histBase = m.hist[0].rev
 	}
 	m.hub.Publish(m.rev, evs)
